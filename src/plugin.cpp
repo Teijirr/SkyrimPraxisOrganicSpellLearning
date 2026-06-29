@@ -35,6 +35,7 @@ std::vector<SpellData> g_spells;
 // ---- Spell Cast Tracking ----
 
 std::unordered_map<std::uint32_t, std::uint32_t> g_spellCastCountByTier;
+std::mutex g_spellCountMutex;
 
 // ---- Pending Card State ----
 
@@ -425,10 +426,38 @@ public:
         if (g_pendingTier != UINT32_MAX) return RE::BSEventNotifyControl::kContinue;
 
         std::uint32_t minSkill = GetMinSkill(spell);
+        std::lock_guard lock(g_spellCountMutex);
         auto& count = g_spellCastCountByTier[minSkill];
         if (++count >= g_rollThreshold) {
             count = 0;
             OnSpellCastThresholdReached(minSkill, player);
+        }
+
+        if (spell->GetCastingType() == RE::MagicSystem::CastingType::kConcentration) {
+            std::thread([spell, minSkill, player]() {
+                while (true) {
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+                    // Check if still casting on either hand
+                    auto* casterL = player->GetMagicCaster(RE::MagicSystem::CastingSource::kLeftHand);
+                    auto* casterR = player->GetMagicCaster(RE::MagicSystem::CastingSource::kRightHand);
+                    bool stillCasting =
+                        (casterL && casterL->currentSpell == spell && casterL->state == RE::MagicCaster::State::kCasting) ||
+                        (casterR && casterR->currentSpell == spell && casterR->state == RE::MagicCaster::State::kCasting);
+
+                    if (!stillCasting || g_pendingTier != UINT32_MAX) break;
+
+                    std::lock_guard lock(g_spellCountMutex);
+                    auto& count = g_spellCastCountByTier[minSkill];
+                    if (++count >= g_rollThreshold) {
+                        count = 0;
+                        SKSE::GetTaskInterface()->AddTask([minSkill, player]() {
+                            OnSpellCastThresholdReached(minSkill, player);
+                            });
+                        break;
+                    }
+                }
+            }).detach();
         }
 
         return RE::BSEventNotifyControl::kContinue;
