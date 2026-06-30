@@ -217,12 +217,15 @@ void ScanAndRegisterSpells(RE::TESDataHandler* dataHandler,
         if (!learnableSpells.count(spell) && !forceInclude) continue;
 
         auto school = static_cast<std::uint32_t>(spell->GetAssociatedSkill());
-        if (!std::count(validSchools.begin(), validSchools.end(), school) && !forceInclude)
+        if (!std::count(validSchools.begin(), validSchools.end(), school))
         {
-            continue;
+            if(!forceInclude)
+                continue;
+            else
+				school = 20; // Default to Destruction for forced includes
         }
 
-        std::uint32_t minSkill = 75;
+        std::uint32_t minSkill = 50;
 		auto* effect = spell->GetCostliestEffectItem();
         if (effect && effect->baseEffect)
             minSkill = static_cast<std::uint32_t>(effect->baseEffect->data.minimumSkill);
