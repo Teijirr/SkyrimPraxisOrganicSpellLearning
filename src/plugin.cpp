@@ -17,6 +17,7 @@ std::uint32_t                    g_rollThreshold = 50;
 std::uint32_t                    g_openCardsScanCode1 = 0x2D;
 std::uint32_t                    g_openCardsScanCode2 = 0x1000;
 std::unordered_set<std::string>  g_excludedMods;
+std::unordered_set<std::string>  g_includedMods;
 
 // ---- Spell Data ----
 
@@ -195,14 +196,35 @@ void ScanAndRegisterSpells(RE::TESDataHandler* dataHandler,
 
     for (auto* spell : dataHandler->GetFormArray<RE::SpellItem>()) {
         if (!spell) continue;
-        if (spell->GetSpellType() != RE::MagicSystem::SpellType::kSpell) continue;
-        if (!learnableSpells.count(spell)) continue;
+        if (spell->GetSpellType() != RE::MagicSystem::SpellType::kSpell &&
+        spell->GetSpellType() != RE::MagicSystem::SpellType::kLesserPower &&
+        spell->GetSpellType() != RE::MagicSystem::SpellType::kVoicePower)
+        {
+			continue;
+        }
+        if (spell->data.costOverride == 0) continue;
+
+        const char* sourceMod = "unknown";
+        if (auto* file = spell->GetFile(0))
+            sourceMod = file->fileName;
+
+        bool forceInclude = false;
+        if (sourceMod && g_includedMods.size() > 0 && g_includedMods.count(std::string(sourceMod)))
+        {
+            forceInclude = true;
+        }
+
+        if (!learnableSpells.count(spell) && !forceInclude) continue;
 
         auto school = static_cast<std::uint32_t>(spell->GetAssociatedSkill());
-        if (!std::count(validSchools.begin(), validSchools.end(), school)) continue;
+        if (!std::count(validSchools.begin(), validSchools.end(), school) && !forceInclude)
+        {
+            continue;
+        }
 
-        std::uint32_t minSkill = 0;
-        if (auto* effect = spell->GetCostliestEffectItem(); effect && effect->baseEffect)
+        std::uint32_t minSkill = 75;
+		auto* effect = spell->GetCostliestEffectItem();
+        if (effect && effect->baseEffect)
             minSkill = static_cast<std::uint32_t>(effect->baseEffect->data.minimumSkill);
 
         std::string name = spell->GetName();
@@ -210,15 +232,9 @@ void ScanAndRegisterSpells(RE::TESDataHandler* dataHandler,
 
         if (!seen.insert({ name, school, minSkill }).second) continue;
 
-        const char* sourceMod = "unknown";
-        if (auto* file = spell->GetFile(0))
-            sourceMod = file->fileName;
-
         if (sourceMod && g_excludedMods.count(std::string(sourceMod))) continue;
 
         std::string description = BuildSpellDescription(spell);
-
-		bool isLesserPower = spell->GetSpellType() == RE::MagicSystem::SpellType::kLesserPower;
 
         SKSE::log::info("  [{}] '{}' | school={} | minSkill={} | mod={}", count, name, school, minSkill, sourceMod);
         g_spells.push_back({ name, school, minSkill, sourceMod, description, spell });
@@ -592,15 +608,27 @@ void LoadSettings()
     g_openCardsScanCode1 = static_cast<std::uint32_t>(ini.GetDoubleValue("General", "iOpenCardsScanCode1", 0x2D));
     g_openCardsScanCode2 = static_cast<std::uint32_t>(ini.GetDoubleValue("General", "iOpenCardsScanCode2", 0x1000));
 
-    const std::string modListStr = ini.GetValue("General", "sExcludeMods", "");
-    if (!modListStr.empty()) {
-        std::stringstream ss(modListStr);
+    const std::string excludedModsStr = ini.GetValue("General", "sExcludeMods", "");
+    if (!excludedModsStr.empty()) {
+        std::stringstream ss(excludedModsStr);
         std::string modName;
         while (std::getline(ss, modName, ',')) {
             auto start = std::find_if(modName.begin(), modName.end(), [](unsigned char c) { return !std::isspace(c); });
             auto end = std::find_if(modName.rbegin(), modName.rend(), [](unsigned char c) { return !std::isspace(c); }).base();
             if (start < end)
                 g_excludedMods.insert(std::string(start, end));
+        }
+    }
+
+    const std::string includedModsStr = ini.GetValue("General", "sIncludeMods", "");
+    if (!includedModsStr.empty()) {
+        std::stringstream ss(includedModsStr);
+        std::string modName;
+        while (std::getline(ss, modName, ',')) {
+            auto start = std::find_if(modName.begin(), modName.end(), [](unsigned char c) { return !std::isspace(c); });
+            auto end = std::find_if(modName.rbegin(), modName.rend(), [](unsigned char c) { return !std::isspace(c); }).base();
+            if (start < end)
+                g_includedMods.insert(std::string(start, end));
         }
     }
 }
