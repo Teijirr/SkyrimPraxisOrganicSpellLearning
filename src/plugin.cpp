@@ -191,7 +191,7 @@ void ScanAndRegisterSpells(RE::TESDataHandler* dataHandler,
     const std::unordered_set<RE::SpellItem*>& learnableSpells)
 {
     constexpr std::array<std::uint32_t, 5> validSchools = { 18, 19, 20, 21, 22 };
-    std::set<std::tuple<std::string, std::uint32_t, std::uint32_t>> seen;
+    std::set<std::tuple<std::string, std::uint32_t>> seen;
     std::uint32_t count = 0;
 
     for (auto* spell : dataHandler->GetFormArray<RE::SpellItem>()) {
@@ -233,7 +233,7 @@ void ScanAndRegisterSpells(RE::TESDataHandler* dataHandler,
         std::string name = spell->GetName();
         if (name.empty()) continue;
 
-        if (!seen.insert({ name, school, minSkill }).second) continue;
+        if (!seen.insert({ name, school }).second) continue;
 
         if (sourceMod && g_excludedMods.count(std::string(sourceMod))) continue;
 
