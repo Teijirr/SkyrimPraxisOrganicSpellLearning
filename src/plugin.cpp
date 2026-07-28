@@ -18,6 +18,8 @@ std::uint32_t                    g_openCardsScanCode1 = 0x2D;
 std::uint32_t                    g_openCardsScanCode2 = 0x1000;
 std::unordered_set<std::string>  g_excludedMods;
 std::unordered_set<std::string>  g_includedMods;
+std::vector<std::pair<std::uint32_t, std::string>> g_includedSpellConfig;
+std::unordered_set<RE::SpellItem*> g_includedSpellForms;
 
 // ---- Spell Data ----
 
@@ -196,13 +198,6 @@ void ScanAndRegisterSpells(RE::TESDataHandler* dataHandler,
 
     for (auto* spell : dataHandler->GetFormArray<RE::SpellItem>()) {
         if (!spell) continue;
-        if (spell->GetSpellType() != RE::MagicSystem::SpellType::kSpell &&
-        spell->GetSpellType() != RE::MagicSystem::SpellType::kLesserPower &&
-        spell->GetSpellType() != RE::MagicSystem::SpellType::kVoicePower)
-        {
-			continue;
-        }
-        if (spell->data.costOverride == 0) continue;
 
         const char* sourceMod = "unknown";
         if (auto* file = spell->GetFile(0))
@@ -214,6 +209,17 @@ void ScanAndRegisterSpells(RE::TESDataHandler* dataHandler,
             forceInclude = true;
         }
 
+        if (!forceInclude && g_includedSpellForms.count(spell))
+            forceInclude = true;
+
+        if (spell->GetSpellType() != RE::MagicSystem::SpellType::kSpell &&
+        spell->GetSpellType() != RE::MagicSystem::SpellType::kLesserPower &&
+        spell->GetSpellType() != RE::MagicSystem::SpellType::kVoicePower)
+        {
+			continue;
+        }
+
+        if (spell->data.costOverride == 0 && !forceInclude) continue;
         if (!learnableSpells.count(spell) && !forceInclude) continue;
 
         auto school = static_cast<std::uint32_t>(spell->GetAssociatedSkill());
@@ -225,16 +231,16 @@ void ScanAndRegisterSpells(RE::TESDataHandler* dataHandler,
 				school = 20; // Default to Destruction for forced includes
         }
 
-        std::uint32_t minSkill = 50;
+		// Default to 0 if unknown minimum skill, which will be treated as Novice (0) tier
+        std::uint32_t minSkill = 0;
 		auto* effect = spell->GetCostliestEffectItem();
         if (effect && effect->baseEffect)
             minSkill = static_cast<std::uint32_t>(effect->baseEffect->data.minimumSkill);
 
         std::string name = spell->GetName();
+
         if (name.empty()) continue;
-
         if (!seen.insert({ name, school }).second) continue;
-
         if (sourceMod && g_excludedMods.count(std::string(sourceMod))) continue;
 
         std::string description = BuildSpellDescription(spell);
@@ -583,6 +589,32 @@ void OnDataLoaded()
 
     view = PrismaUI->CreateView("Praxis/index.html", OnViewReady);
 
+    for (const auto& [localId, modName] : g_includedSpellConfig) {
+        RE::SpellItem* resolvedSpell = nullptr;
+
+        // Try as a plain spell first
+        resolvedSpell = dataHandler->LookupForm<RE::SpellItem>(localId, modName);
+
+        // If that fails, try as a Shout and pull its spell(s) out
+        if (!resolvedSpell) {
+            if (auto* shout = dataHandler->LookupForm<RE::TESShout>(localId, modName)) {
+                for (const auto& variation : shout->variations) {
+                    if (variation.spell) {
+                        g_includedSpellForms.insert(variation.spell);
+                    }
+                }
+                continue; // handled via shout, skip the single-spell insert below
+            }
+        }
+
+        if (resolvedSpell) {
+            g_includedSpellForms.insert(resolvedSpell);
+        }
+        else {
+            SKSE::log::warn("Praxis: could not resolve included spell/shout 0x{:X} in '{}'", localId, modName);
+        }
+    }
+
     auto learnableSpells = CollectLearnableSpells(dataHandler);
     ScanAndRegisterSpells(dataHandler, learnableSpells);
 
@@ -632,6 +664,32 @@ void LoadSettings()
             auto end = std::find_if(modName.rbegin(), modName.rend(), [](unsigned char c) { return !std::isspace(c); }).base();
             if (start < end)
                 g_includedMods.insert(std::string(start, end));
+        }
+    }
+
+    const std::string includedSpellsStr = ini.GetValue("General", "sIncludeSpells", "");
+    if (!includedSpellsStr.empty()) {
+        std::stringstream ss(includedSpellsStr);
+        std::string token;
+        while (std::getline(ss, token, ',')) {
+            auto start = std::find_if(token.begin(), token.end(), [](unsigned char c) { return !std::isspace(c); });
+            auto end = std::find_if(token.rbegin(), token.rend(), [](unsigned char c) { return !std::isspace(c); }).base();
+            if (start >= end) continue;
+            std::string entry(start, end);
+
+            auto sep = entry.find('~');
+            if (sep == std::string::npos) continue;
+
+            std::string idStr = entry.substr(0, sep);
+            std::string modStr = entry.substr(sep + 1);
+
+            try {
+                std::uint32_t localId = static_cast<std::uint32_t>(std::stoul(idStr, nullptr, 16));
+                g_includedSpellConfig.emplace_back(localId, modStr);
+            }
+            catch (...) {
+                SKSE::log::warn("Praxis: failed to parse sIncludeSpells entry '{}'", entry);
+            }
         }
     }
 }
