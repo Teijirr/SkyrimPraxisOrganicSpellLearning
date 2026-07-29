@@ -237,6 +237,12 @@ void ScanAndRegisterSpells(RE::TESDataHandler* dataHandler,
         if (effect && effect->baseEffect)
             minSkill = static_cast<std::uint32_t>(effect->baseEffect->data.minimumSkill);
 
+		// MinSkill should be one of the defined tiers (0, 25, 50, 75, 100). If not, default to 0.
+		if (minSkill != 0 && minSkill != 25 && minSkill != 50 && minSkill != 75 && minSkill != 100)
+		{
+			minSkill = 0;
+		}
+
         std::string name = spell->GetName();
 
         if (name.empty()) continue;
